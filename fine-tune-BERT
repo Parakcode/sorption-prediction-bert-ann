@@ -1,0 +1,237 @@
+!pip install transformers
+import pandas as pd
+import numpy as np
+import torch
+from transformers import BertTokenizer, BertForSequenceClassification, AdamW
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+
+# Load data
+df = pd.read_csv('transformer.data.csv')
+
+# Split data into train and test sets
+train_df, test_df = train_test_split(df, test_size=0.2)
+
+# Tokenize SMILES using BERT tokenizer
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+train_encodings = tokenizer(list(train_df['SMILES']), truncation=True, padding=True)
+test_encodings = tokenizer(list(test_df['SMILES']), truncation=True, padding=True)
+
+# Convert koc values to tensor
+train_labels = torch.tensor(list(train_df['LOG(KOC)']))
+test_labels = torch.tensor(list(test_df['LOG(KOC)']))
+
+# Create dataset objects for train and test sets
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = self.labels[idx]
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+train_dataset = Dataset(train_encodings, train_labels)
+test_dataset = Dataset(test_encodings, test_labels)
+
+# Fine-tune BERT on your dataset
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=1)
+optimizer = AdamW(model.parameters(), lr=5e-5)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+model.to(device)
+
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16)
+
+for epoch in range (12):
+    model.train()
+    for batch in train_loader:
+        optimizer.zero_grad()
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+        loss = outputs.loss
+        loss.backward()
+        optimizer.step()
+
+    model.eval()
+    predictions = []
+    true_labels = []
+    for batch in test_loader:
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels']
+        with torch.no_grad():
+            outputs = model(input_ids, attention_mask=attention_mask)
+            logits = outputs.logits.detach().cpu().numpy().ravel().tolist()
+            predictions.extend(logits)
+            true_labels.extend(labels.numpy().ravel().tolist())
+
+    rmse_score = mean_squared_error(true_labels,predictions,squared=False)
+    r2_score_value=r2_score(true_labels,predictions)
+
+    print(f"Epoch {epoch+1} - RMSE: {rmse_score:.4f} - R^2: {r2_score_value:.4f}")
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import mean_squared_error, r2_score
+
+model.eval()
+predictions = []
+true_labels = []
+for batch in test_loader:
+    input_ids = batch['input_ids'].to(device)
+    attention_mask = batch['attention_mask'].to(device)
+    labels = batch['labels']
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+        logits = outputs.logits.detach().cpu().numpy().ravel().tolist()
+        predictions.extend(logits)
+        true_labels.extend(labels.numpy().ravel().tolist())
+
+true_labels = np.array(true_labels)
+predictions = np.array(predictions)
+
+errors = true_labels - predictions
+
+rmse_score = mean_squared_error(true_labels,predictions,squared=False)
+r2_score_value=r2_score(true_labels,predictions)
+
+print(f"Epoch {epoch+1} - RMSE: {rmse_score:.4f} - R^2: {r2_score_value:.4f}")
+
+# Plot the histogram of the errors
+plt.hist(errors, bins=50)
+plt.xlabel('Error')
+plt.ylabel('Frequency')
+plt.title('')
+plt.show()
+# Calculate the mean and standard deviation of the errors
+mean = np.mean(errors)
+std_dev = np.std(errors)
+
+print("Mean error:", mean)
+print("Standard deviation of error:", std_dev)
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(10, 5))
+
+ax.scatter(range(len(true_labels)), true_labels, c='green', s=10 , label='True Values')
+ax.scatter(range(len(predictions)), predictions, c='red', s=10 , label='Predictions')
+ax.set_xlabel('Data')
+ax.set_ylabel('True Values/Predictions')
+ax.set_title('True Values/Predictions(test set))')
+ax.legend()
+plt.show()
+
+
+import seaborn as sns
+
+sns.regplot(x=predictions, y=true_labels)
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+m, b = np.polyfit(np.squeeze(true_labels), np.squeeze(predictions), 1)
+plt.scatter(np.squeeze(true_labels), np.squeeze(predictions), label='Data')
+plt.plot(np.squeeze(true_labels), m*np.squeeze(true_labels) + b,label='Fit')
+plt.xlabel('Experimental log(Koc)')
+plt.ylabel('Predicted log(Koc)')
+plt.text(0.5, 0.9, 'y = {}x + {}'.format(m, b), fontsize=12,
+         transform=plt.gcf().transFigure)
+plt.title('test set', loc='left')
+plt.legend()
+plt.show()
+
+import matplotlib.pyplot as plt
+
+y_train_pred = []
+y_train_true = []
+
+model.eval()
+with torch.no_grad():
+    for batch in train_loader:
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        outputs = model(input_ids, attention_mask=attention_mask)
+        y_train_pred.extend(outputs.logits.cpu().numpy().flatten())
+        y_train_true.extend(labels.cpu().numpy())
+# Get predictions for train set
+model.eval()
+train_predictions = []
+train_labels = []
+for batch in train_loader:
+    input_ids = batch['input_ids'].to(device)
+    attention_mask = batch['attention_mask'].to(device)
+    labels = batch['labels'].to(device)
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+    logits = outputs.logits.detach().cpu().numpy().ravel()
+    train_predictions.extend(logits.tolist())
+    train_labels.extend(labels.detach().cpu().numpy().ravel().tolist())
+
+# Calculate RMSE and R^2 for train set
+train_rmse = mean_squared_error(train_labels, train_predictions, squared=False)
+train_r2 = r2_score(train_labels, train_predictions)
+
+print(f"Train RMSE: {train_rmse:.4f}")
+print(f"Train R^2: {train_r2:.4f}")
+# Plot error histogram for train set
+error_train = [train_labels[i] - train_predictions[i] for i in range(len(train_labels))]
+plt.hist(error_train, bins=50)
+plt.xlabel('Prediction Error [LOG(KOC)]')
+plt.ylabel('Count')
+plt.show()
+
+# Plot error histogram for train set
+error_train = [train_labels[i] - train_predictions[i] for i in range(len(train_labels))]
+counts, bins = np.histogram(error_train, bins=50)
+mids = 0.5 * (bins[1:] + bins[:-1])
+mean_error_train = np.sum(counts * mids) / np.sum(counts)
+std_error_train = np.sqrt(np.sum(counts * (mids - mean_error_train) ** 2) / np.sum(counts))
+
+print(f"Mean of error histogram: {mean_error_train:.4f}")
+print(f"Standard deviation of error histogram: {std_error_train:.4f}")
+import matplotlib.pyplot as plt
+
+plt.scatter(train_labels, train_predictions)
+plt.xlabel('True Labels')
+plt.ylabel('Predicted Labels')
+plt.title('True vs Predicted Labels')
+plt.show()
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(10, 5))
+
+ax.scatter(range(len(train_labels)), train_labels, c='green', s=10 , label='True Values')
+ax.scatter(range(len(train_predictions)), train_predictions, c='red', s=10 , label='Predictions')
+ax.set_xlabel('Data')
+ax.set_ylabel('True Values/Predictions')
+ax.set_title('True Values/Predictions(train set))')
+ax.legend()
+plt.show()
+
+
+import seaborn as sns
+
+sns.regplot(x=train_predictions, y=train_labels)
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+m, b = np.polyfit(np.squeeze(train_labels), np.squeeze(train_predictions), 1)
+plt.scatter(np.squeeze(train_labels), np.squeeze(train_predictions), label='Data')
+plt.plot(np.squeeze(train_labels), m*np.squeeze(train_labels) + b,label='Fit')
+plt.xlabel('Experimental log(Koc)')
+plt.ylabel('Predicted log(Koc)')
+plt.text(0.5, 0.9, 'y = {}x + {}'.format(m, b), fontsize=12,
+         transform=plt.gcf().transFigure)
+plt.title('train set', loc='left')
+plt.legend()
+plt.show()
